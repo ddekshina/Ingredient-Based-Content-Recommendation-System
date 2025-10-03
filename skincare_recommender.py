@@ -12,13 +12,18 @@ from bokeh.plotting import figure, show
 from bokeh.models import HoverTool, ColumnDataSource
 from bokeh.io import output_file, save
 
+# --- CONFIGURATION ---
+# Set to True to see processing steps, False for a cleaner, user-facing output.
+VERBOSE = False
+
 # --- 2. Data Loading and Preprocessing ---
-def load_and_preprocess_data(filepath):
+def load_and_preprocess_data(filepath, verbose=False):
     """
     Loads the dataset, filters for moisturizers for dry skin,
     and performs necessary cleaning and tokenization.
     """
-    print("Loading and preprocessing data...")
+    if verbose:
+        print("Loading and preprocessing data...")
     # Load the dataset
     df = pd.read_csv(filepath)
 
@@ -48,15 +53,17 @@ def load_and_preprocess_data(filepath):
 
     moisturizers['ingredients_list'] = moisturizers['Ingredients'].apply(tokenize_ingredients)
     
-    print(f"Preprocessing complete. Found {len(moisturizers)} moisturizers for dry skin.")
+    if verbose:
+        print(f"Preprocessing complete. Found {len(moisturizers)} moisturizers for dry skin.")
     return moisturizers
 
 # --- 3. Feature Engineering ---
-def create_ingredient_matrix(df):
+def create_ingredient_matrix(df, verbose=False):
     """
     Creates a document-term matrix (TF-IDF) from the ingredient lists.
     """
-    print("Creating TF-IDF ingredient matrix...")
+    if verbose:
+        print("Creating TF-IDF ingredient matrix...")
     # Use TF-IDF to give more weight to rare, defining ingredients
     # The tokenizer expects a string, so we join the list back
     df['ingredient_str'] = df['ingredients_list'].apply(lambda x: ' '.join(x).replace('*','')) # Clean up ingredient strings
@@ -64,15 +71,17 @@ def create_ingredient_matrix(df):
     vectorizer = TfidfVectorizer(max_df=0.8, min_df=5, stop_words='english')
     tfidf_matrix = vectorizer.fit_transform(df['ingredient_str'])
     
-    print(f"TF-IDF matrix created with shape: {tfidf_matrix.shape}")
+    if verbose:
+        print(f"TF-IDF matrix created with shape: {tfidf_matrix.shape}")
     return tfidf_matrix, vectorizer
 
 # --- 4. Dimensionality Reduction ---
-def reduce_dimensions(matrix, df):
+def reduce_dimensions(matrix, df, verbose=False):
     """
     Applies t-SNE to reduce the ingredient matrix to 2 dimensions for plotting.
     """
-    print("Applying t-SNE for dimensionality reduction...")
+    if verbose:
+        print("Applying t-SNE for dimensionality reduction...")
     # Note: 'n_iter' is deprecated in newer scikit-learn versions. Using 'max_iter' instead.
     # Added init='pca' and learning_rate='auto' for better performance and stability with newer versions.
     tsne = TSNE(n_components=2, perplexity=30, max_iter=1000, random_state=42, init='pca', learning_rate='auto')
@@ -81,15 +90,17 @@ def reduce_dimensions(matrix, df):
     df['tsne_x'] = tsne_results[:, 0]
     df['tsne_y'] = tsne_results[:, 1]
     
-    print("t-SNE complete.")
+    if verbose:
+        print("t-SNE complete.")
     return df
 
 # --- 5. Interactive Visualization ---
-def create_interactive_plot(df, output_filename="product_clusters.html"):
+def create_interactive_plot(df, output_filename="product_clusters.html", verbose=False):
     """
     Creates an interactive Bokeh scatter plot to visualize product clusters.
     """
-    print(f"Creating interactive Bokeh plot, will be saved to '{output_filename}'...")
+    if verbose:
+        print(f"Creating interactive Bokeh plot, will be saved to '{output_filename}'...")
     # Create a short version of ingredients for the tooltip
     df['ingredients_short'] = df['ingredients_list'].apply(lambda x: ', '.join(x[:5]) + '...')
 
@@ -136,7 +147,8 @@ def create_interactive_plot(df, output_filename="product_clusters.html"):
     # Save the plot to an HTML file
     output_file(output_filename, title="Skincare Product Clusters")
     save(p)
-    print("Plot saved successfully.")
+    if verbose:
+        print("Plot saved successfully.")
 
 # --- 6. Recommendation Engine ---
 def get_recommendations(product_name, df, matrix):
@@ -145,13 +157,16 @@ def get_recommendations(product_name, df, matrix):
     of their ingredient vectors. Filters out simple size variations.
     """
     # Normalize product name for matching
-    product_name = product_name.lower()
+    product_name = product_name.lower().strip()
     
-    if product_name not in df['Name'].values:
-        return f"Product '{product_name.title()}' not found in the dataset.", None, None
+    # Check if the product exists in the dataframe
+    product_series = df[df['Name'] == product_name]
+    if product_series.empty:
+        # Return 2 values: an error string and None
+        return f"Product '{product_name.title()}' not found in the dataset.", None
 
     # Get the index of the input product
-    idx = df[df['Name'] == product_name].index[0]
+    idx = product_series.index[0]
 
     # Calculate cosine similarity
     cosine_sim = cosine_similarity(matrix[idx], matrix)
@@ -175,7 +190,8 @@ def get_recommendations(product_name, df, matrix):
         if i == idx:
             continue
         # Skip products that are just size variations
-        if base_name in df.iloc[i]['Name']:
+        current_product_name = df.iloc[i]['Name']
+        if base_name in current_product_name or product_name in current_product_name:
             continue
         recommended_indices.append(i)
         scores.append(score)
@@ -193,39 +209,58 @@ if __name__ == "__main__":
     DATA_FILE = 'cosmetics.csv'
     
     # Step 1: Load and preprocess the data
-    moisturizers_df = load_and_preprocess_data(DATA_FILE)
+    moisturizers_df = load_and_preprocess_data(DATA_FILE, verbose=VERBOSE)
     
     # Step 2: Create the ingredient matrix
-    tfidf_matrix, vectorizer = create_ingredient_matrix(moisturizers_df)
+    tfidf_matrix, vectorizer = create_ingredient_matrix(moisturizers_df, verbose=VERBOSE)
     
     # Step 3: Reduce dimensions for visualization
-    moisturizers_df_tsne = reduce_dimensions(tfidf_matrix, moisturizers_df)
+    moisturizers_df_tsne = reduce_dimensions(tfidf_matrix, moisturizers_df, verbose=VERBOSE)
     
     # Step 4: Create and save the interactive plot
-    create_interactive_plot(moisturizers_df_tsne)
+    create_interactive_plot(moisturizers_df_tsne, verbose=VERBOSE)
     
-    # Step 5: Demonstrate the recommendation engine
-    print("\n--- Recommendation Engine Demo ---")
-    sample_product = 'crème de la mer'
-    recommendations, original_ingredients = get_recommendations(sample_product, moisturizers_df, tfidf_matrix)
-
-    if isinstance(recommendations, pd.DataFrame):
-        print(f"Top 5 recommendations for '{sample_product.title()}':")
-        print(recommendations.to_string())
-
-        # --- IMPROVED JUSTIFICATION ---
-        # Get the top recommendation for a more detailed and accurate justification
-        top_rec_row = recommendations.iloc[0]
-        top_rec_ingredients = moisturizers_df[moisturizers_df['Name'] == top_rec_row['Name'].lower()]['ingredients_list'].values[0]
+    # --- Step 5: Interactive Recommendation Loop ---
+    print("\n--- Skincare Recommendation Engine ---")
+    print("Interactive plot 'product_clusters.html' has been generated.")
+    print("You can try product names like 'Protini™ Polypeptide Cream'.")
+    
+    while True:
+        # Prompt the user to enter a product name
+        user_input = input("\nEnter a moisturizer name to get recommendations (or type 'quit' to exit): ")
         
-        # Compare the original, full ingredient lists to get a true count of shared ingredients
-        shared_ingredients = set(original_ingredients) & set(top_rec_ingredients)
-        
-        print("\n--- Justification for Top Recommendation ---")
-        print(f"Product: {top_rec_row['Name'].title()} by {top_rec_row['Brand'].title()}")
-        print(f"Similarity Score: {top_rec_row['similarity_score']:.2f}")
-        print(f"Based on the full ingredient lists, it shares {len(shared_ingredients)} ingredients with '{sample_product.title()}'.")
-        print(f"Key shared ingredients include: {', '.join(list(shared_ingredients)[:5])}...")
-    else:
-        print(recommendations)
+        if user_input.lower() in ['quit', 'exit']:
+            print("Exiting the recommendation engine. Goodbye!")
+            break
+            
+        recommendations, original_ingredients = get_recommendations(user_input, moisturizers_df, tfidf_matrix)
+
+        # Check the second return value. If it's None, an error occurred.
+        if original_ingredients is not None:
+            print(f"\nTop 5 recommendations for '{user_input.title()}':")
+            print(recommendations.to_string())
+
+            # --- IMPROVED JUSTIFICATION ---
+            # Get the top recommendation for a more detailed and accurate justification
+            if not recommendations.empty:
+                top_rec_row = recommendations.iloc[0]
+                top_rec_ingredients = moisturizers_df[moisturizers_df['Name'] == top_rec_row['Name'].lower()]['ingredients_list'].values[0]
+                
+                # Compare the original, full ingredient lists to get a true count of shared ingredients
+                shared_ingredients = set(original_ingredients) & set(top_rec_ingredients)
+                
+                print("\n--- Justification for Top Recommendation ---")
+                print(f"Product: {top_rec_row['Name'].title()} by {top_rec_row['Brand'].title()}")
+                print(f"Similarity Score: {top_rec_row['similarity_score']:.2f}")
+                if shared_ingredients:
+                    print(f"Based on the full ingredient lists, it shares {len(shared_ingredients)} ingredients with '{user_input.title()}'.")
+                    print(f"Key shared ingredients include: {', '.join(list(shared_ingredients)[:5])}...")
+                else:
+                    print("While mathematically similar based on the weighted TF-IDF model, it shares no exact top ingredients.")
+            else:
+                print("\nCould not find any sufficiently different products to recommend.")
+
+        else:
+            # The 'recommendations' variable now holds the error string
+            print(recommendations)
 
